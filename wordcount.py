@@ -33,6 +33,7 @@ upload_form_template = '''
 
 '''
 
+# monitoring routes
 @app.route("/ping")
 def ping():
     return f"Pong! App Name: {__name__}", 200
