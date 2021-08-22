@@ -7,6 +7,8 @@ name = "pypi"
 flask = "*"
 requests = "*"
 binaryornot = "*"
+gunicorn = {extras = ["gevent"], version = "*"}
+gevent = "*"
 
 [dev-packages]
 pytest = "*"

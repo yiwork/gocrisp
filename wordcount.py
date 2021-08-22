@@ -35,7 +35,7 @@ upload_form_template = '''
 
 @app.route("/ping")
 def ping():
-    return f"Pong! App Name: {__name__}"
+    return f"Pong! App Name: {__name__}", 200
 
 @app.route("/", methods=['POST','GET'])
 def get_word_count():
