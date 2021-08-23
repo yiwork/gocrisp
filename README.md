@@ -46,39 +46,52 @@ Can this service be implemented with just one interface that permits user to upl
  * Using mesos-marathon or any other containerization engine to run containers on destination cloud instances
 
 
-## Build instructions
+## Instructions
+
+From this point forward, most of the instructions are written to be tested in a minikube environment. If you're running in GKE, 
+Kubernetes config will need to modified to reflect proper Google Cloud repo name. 
+
+### Build instructions
 
 To build the docker container:
 
 ```bash
 
+    # If you're running on already existing GKE
     cd gocrisp
     docker build -t gcr.io/gocrisp/gocrisp-wordcount:$(git rev-parse --short HEAD) ./
+
+    # If you want to run this app on local minikube cluster:
+    eval $(minikube docker-env)
+    docker build -t gocrisp-wordcount:$(git rev-parse --short HEAD) ./
 
 ```
 
 
-## Run instructions
+### Run instructions
 
 To run the container locally on one's machine:
 
 ```bash
 
-    docker run -p 5000:5000 gcr.io/gocrisp/gocrisp-wordcount:$(git rev-parse --short HEAD)
+    docker run -p 5000:5000 gocrisp-wordcount:$(git rev-parse --short HEAD)
 
 ```
 
 
-## Deploy application to Kubernetes cluster 
+### Deploy application to Kubernetes cluster 
 
 This instruction should be applicable on either minikube cluster or GKE cluster. For the latter one must first upload the docker image to the GKE container repo:
 
 ```bash
 
+    # These set of instructions are when running on GKE
     gcloud auth login
     gcloud auth configure-docker
     docker tag gcr.io/gocrisp/gocrisp-wordcount:$(git rev-parse --short HEAD) gcr.io/gocrisp/gocrisp-wordcount:latest
     docker push -a gcr.io/gocrisp/gocrisp-wordcount  # this should push both tags
+
+    # Now you'll need to modify the various kubernetes configs in k8syml to have the proper image name 
 
 ```
 
@@ -86,10 +99,12 @@ Now assuming your `kubectl` is configured to talk to the correct cluster, run th
 
 
 ```bash
+
     kubectl apply -f k8syml/wordcount-deployment.yml
     kubectl rollout status deployment/wordcount-deployment  # should show that a deployment is ongoing and spinning up 2 containers 
     kubectl apply -f k8syml/wordcount-service.yml
     kubectl get services                                    # should retrieve a service named wordcount-service
+
 ```
 
 The type of service this creates is NodePort service, which maps to k8s cluster node ports. In a production setup most likely we will need to modify the service to type `loadbalancer` to have it automatically provision a cloud provider load balancer, or define an ingress resource in the kubernetes cluster.
@@ -100,4 +115,59 @@ When running this on minikube, you'll now need find the url that'll allow you to
     minikube service wordcount-service --url
 ```
 
+
+### To test the service
+
+This app will display a page with upload form. This app will also take curl calls and return via json format. 
+
+```bash
+
+    # If you are testing when app is run locally via docker:
+    #  Response - {"file_name": "testfile.txt", "word_count": 226}
+    curl -XPOST -F "destfile=@test/testfile.txt" -H "accept-encoding=application/json" localhost:5000  
+
+    # If running in your local minikube installation, copy the url listed in output of "minikube service wordcount-service --url" command
+    curl -XPOST -F "destfile=@test/testfile.txt" -H "accept-encoding=application/json" <minikube-proxied-url-here>
+
+```
+
+
+### To scale up and deploy new version of code:
+
+To scale up and deploy new version of code, one can create a kustomization.yml, add the changes and apply them to the existing deployment. Though in the long term this isn't a good solution. I would opt for using helm to generate app charts in CI/CD pipeline instead. Using helm will give you better control over the way the deployment template is generated while following principle of infra as code
+
+
+```bash
+    
+    # Suppose new code has been committed, in your CI/CD pipeline step build the new version of app
+    # Below steps will work with minikube, if modified properly can run in GKE
+    docker build -t gocrisp-wordcount:$(git rev-parse --short HEAD) ./
+    docker push gocrisp-wordcount:$(git rev-parse --short HEAD)
+
+    cd k8syml
+    # Generate a kustomization.yml file in shell
+    cat <<EOF > ./upscale_and_deploy.yml
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+        name: wordcount-deployment
+    spec:
+        replicas: 4
+        template:
+            spec: 
+                containers:
+                    - name: wordcount
+                      image: gocrisp-wordcount:$(git rev-parse --short HEAD)
+EOF
+
+    cat <<EOF >./kustomization.yml
+    resources:
+        - wordcount-deployment.yml
+    patchesStrategicMerge:
+        - upscale_and_deploy.yml
+EOF
+
+    kubectl apply -k ./kustomization.yml
+
+```
 
