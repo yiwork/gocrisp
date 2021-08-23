@@ -21,11 +21,11 @@ Can this service be implemented with just one interface that permits user to upl
 
 ## Assumptions taken when working on this project:
 
- * Scope does not include setting up a complete serving infrastructure 
- * Scope does not include implementation of a full CI/CD infrastructure (like setting up Jenkins)
+ * Scope does not include setting up a complete serving infrastructure (e.g. VPC/Subnet definition/Load balancers/Containerization Orchestration cluster)
+ * Scope does not include implementation of a full CI/CD infrastructure (e.g. Jenkins)
  * Scope does not include setting up a monitoring infrastructure
  * Scaling of this service will be manual and not automated
- * Encryption (in-transit, or at rest), and security are not a concern.
+ * Application security and encryption (in-transit or at rest), are not a concern. Plain http call is fine, no need for SSL termination, certificate generation, etc. 
  * Given the question posed above, deliverable will be a http service with just one interface that permits a POST request to upload file and the interface will respond back immediately the word count - combining 2 steps into 1 step to retrieve word count of file.
  * Given that the service iteself is not the focus of this exercise, I do not have integration or unit tests at the moment for the service itself.
 
@@ -50,9 +50,11 @@ Can this service be implemented with just one interface that permits user to upl
 
 To build the docker container:
 
-```
+```bash
+
     cd gocrisp
     docker build -t gcr.io/gocrisp/gocrisp-wordcount:$(git rev-parse --short HEAD) ./
+
 ```
 
 
@@ -60,11 +62,42 @@ To build the docker container:
 
 To run the container locally on one's machine:
 
-```
+```bash
+
     docker run -p 5000:5000 gcr.io/gocrisp/gocrisp-wordcount:$(git rev-parse --short HEAD)
+
 ```
 
 
-## To deploy container as Kubernetes service:
+## Deploy application to Kubernetes cluster 
+
+This instruction should be applicable on either minikube cluster or GKE cluster. For the latter one must first upload the docker image to the GKE container repo:
+
+```bash
+
+    gcloud auth login
+    gcloud auth configure-docker
+    docker tag gcr.io/gocrisp/gocrisp-wordcount:$(git rev-parse --short HEAD) gcr.io/gocrisp/gocrisp-wordcount:latest
+    docker push -a gcr.io/gocrisp/gocrisp-wordcount  # this should push both tags
+
+```
+
+Now assuming your `kubectl` is configured to talk to the correct cluster, run the following command to create a deployment, then map the service to the deployment. 
+
+
+```bash
+    kubectl apply -f k8syml/wordcount-deployment.yml
+    kubectl rollout status deployment/wordcount-deployment  # should show that a deployment is ongoing and spinning up 2 containers 
+    kubectl apply -f k8syml/wordcount-service.yml
+    kubectl get services                                    # should retrieve a service named wordcount-service
+```
+
+The type of service this creates is NodePort service, which maps to k8s cluster node ports. In a production setup most likely we will need to modify the service to type `loadbalancer` to have it automatically provision a cloud provider load balancer, or define an ingress resource in the kubernetes cluster.
+
+When running this on minikube, you'll now need find the url that'll allow you to access this service.
+
+```bash
+    minikube service wordcount-service --url
+```
 
 
