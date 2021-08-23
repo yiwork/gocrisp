@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template_string
+from flask import Flask, request, render_template_string, json
 import logging, os, re
 from binaryornot.check import is_binary
 from time import strftime, gmtime
@@ -29,6 +29,8 @@ upload_form_template = '''
       <input type="file" name="destfile" accept="text/plain">
       <input type="submit" value="Upload Now!">
     </form>
+
+    <h3>To submit via curl: curl -XPOST -F "destfile=@<file>" -H "accept-encoding=application/json" localhost:5000</h3>
     </html>
 
 '''
@@ -37,6 +39,7 @@ upload_form_template = '''
 @app.route("/ping")
 def ping():
     return f"Pong! App Name: {__name__}", 200
+
 
 @app.route("/", methods=['POST','GET'])
 def get_word_count():
@@ -47,13 +50,13 @@ def get_word_count():
 
         if 'destfile' not in request.files:
             app.logger.warn("Posted form missing destfile field")
-            return render_template_string(upload_form_template, error_msg="Form submitted without file"), 400
+            return assemble_response(error_msg="Form submitted without file"), 400
         else:
 
             uploaded_file = request.files['destfile']
             if uploaded_file.filename == '':
                 app.logger.warn("no files selected to be uploaded")
-                return render_template_string(upload_form_template, error_msg="Form submitted without file"), 400
+                return assemble_response(error_msg="Form submitted without file"), 400
             else:
                 #new_file_name = strftime("%Y-%m-%dT%H:%M:%S,%f", gmtime())
                 new_file_name = os.path.join(
@@ -63,8 +66,7 @@ def get_word_count():
                 uploaded_file.save(new_file_name)                
                 if is_binary(new_file_name):
                     app.logger.error("Binary file uploaded")
-                    return render_template_string(
-                                upload_form_template, 
+                    return assemble_response(
                                 error_msg="Uploaded file is binary object. Cannot count words in binary file"
                             ), 400
                 else:
@@ -74,20 +76,26 @@ def get_word_count():
                             # words = re.findall(r'[a-zA-Z0-9_-\']+',line)
                             words = line.split()
                             word_count += len(words)
-                    return render_template_string(
-                                upload_form_template, 
+                    return assemble_response(
                                 file_name=str(uploaded_file.filename.rsplit('/',1).pop()), 
                                 word_count=word_count
                             ), 200
     else:
         app.logger.error('Bad method!')
-        return render_template_string(upload_form_template, error_msg="Wrong method submitted with form"), 405 
+        return assemble_response(error_msg="Wrong method submitted with form"), 405 
 
-# for simplicity sake, embedding html directy in file.
-# This really should be in a separate template file
-# Also all errors and responses will display this page as well
-#@app.route("/", methods=['GET'])
-#def get_upload_form(file_name=None, word_count=None, error_msg=None):
+
+def assemble_response(file_name=None, word_count=None, error_msg=None):
+    if request.accept_mimetypes.accept_json:
+        if error_msg:
+            return json.dumps({"error": error_msg})
+        else:
+            return json.dumps({"word_count": word_count, "file_name": file_name})
+    else:
+        if error_msg:
+            return render_template_string(upload_form_template, error_msg=error_msg)
+        else:
+            return render_template_string(upload_form_template, word_count=word_count, file_name=file_name)
 
 
 #    return render_template_string(template,file_name=file_name, word_count=word_count, error_msg=error_msg)
