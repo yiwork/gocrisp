@@ -51,6 +51,7 @@ Can this service be implemented with just one interface that permits user to upl
 From this point forward, most of the instructions are written to be tested in a minikube environment. If you're running in GKE, 
 Kubernetes config will need to modified to reflect proper Google Cloud repo name. 
 
+
 ### Build instructions
 
 To build the docker container:
@@ -134,7 +135,7 @@ This app will display a page with upload form. This app will also take curl call
 
 ### To scale up and deploy new version of code:
 
-To scale up and deploy new version of code, one can create a kustomization.yml, add the changes and apply them to the existing deployment. Though in the long term this isn't a good solution. I would opt for using helm to generate app charts in CI/CD pipeline instead. Using helm will give you better control over the way the deployment template is generated while following principle of infra as code
+To scale up and deploy new version of code, one can create a `kustomization.yml`, add the changes and apply them to the existing deployment. Though in the long term this isn't a good solution. I would opt for using [helm](https://helm.sh/) to generate app charts in CI/CD pipeline instead. Using helm will give you better control over the way the deployment template is generated while following principle of infra as code
 
 
 ```bash
@@ -167,7 +168,49 @@ EOF
         - upscale_and_deploy.yml
 EOF
 
-    kubectl apply -k ./kustomization.yml
+    # generate the modified deployment file then apply to current deployment
+    kubectl kustomize ./ | tee /dev/tty | kubectl apply -f -
+    kubectl rollout status deployment/wordcount-deployment
 
 ```
+
+
+## To monitor the service
+
+Currently within the code there's a basic health check end point `/ping` that respond with 200 status code to indicate that it is ready to serve. 
+This is surely not what you mean by "monitoring". 
+
+On a Kubernetes cluster there is a rudimentary metrics server that will allow you to monitor how well the resources are doing. This metrics server is how kubernetes cluster gauge whether the application is running under/over the autoscaling threshold and when the application should automatically scale by increasing replicas. 
+
+Best method to monitor this service is to add code to meter how long each request takes, how many requests it has received since the app started, and size of the file it is processing currently. Have these metrics be sent to a monitoring service such as Datadog, dynatrace, or in-house prometheus and aggregate on a time series. What also needs to be monitored is how many requests the kubernetes service itself is receiving, how long the request takes between load balancer to the application.  Those metric will have to be collected outside of the application container. 
+
+Ideally each pod should run 1 container of application, 1 container of monitoring/tracing agent, 1 log aggregation agent, and 1 application proxy. Monitoring agent and log aggregation agent may be one and the same thing, as it is the case if you are using Datadog for monitoring. The monitoring/tracing agent inside the pod will permit more accurate metering of request times passed between the application proxy and the application. It can also gauge the load the proxy is under, and whether it is matching the load that the application is handling, so you know if your application is performant.
+
+Log aggregation on pod level will allow for better lumping of logs between proxy and application using the same timestamp. If your tracing agent failed you can always piece together an actual trace. By having the tracing agent inside this pod, traces from both proxy and application cannot be confused with other traces run by another pod in the cluster. 
+
+
+## Possible performance issue with this application
+
+ * Handling of large files may be difficult. While the file is being read line by line, the initial upload of file is in multi-part upload and is throttled by gunicorn setting of MAX_CONTENT_LENGTH.  You can probably go longer without code optimization by giving more ram to the container that tweaking that setting. Going forward perhaps it is better to move to a stream-ing type processing?  Word count done on each multi-part upload, then disgard content of that upload part once word count of that part is recorded, then process the next part. 
+ * With current implementation ultimately the disk space of the container will be gradually used up with files being stored locally on each container. This is less of a worry if application is frequently deployed but still an issue nonetheless. 
+
+
+## Possible re-architecting of application to address scale issues
+
+Aside from code optimization, ultimately as business case becomes more complicated, and upload gets longer and longer, perhaps it would be smart to split out the upload function and word count function into 2 separate services, with a datastore in between these services to store status of file upload, location of file storage within the cluster, and ultimate word count of each file. 
+
+It may also make sense to start a queue-ing system between the two processes so that once the upload process is done, a message can be sent to the word count queue, letting the word count service know that a file is ready for word count processing. 
+
+You'll also need to add a feature to differentiate one user's file from another, so that word count can be retrieved based upon a combined id of user and file name.  Or issue to user a job id that will track both part of the process, allow user to retrieve status of job and look up job result. 
+
+Lastly, this isn't a unique problem...I think there are mapreduce framework/infrastructure designed for this problem. Research how to leverage that will help tremenously as well since those systems are designed to be performant for this problem. 
+
+
+## Disclosure:
+
+I've never ran any application inside of a kubernetes cluster (managed or otherwise). Never had any experience building or administering k8s cluster. Never had to architect an application serving ecosystem inside kubernetes cluster. My approach to this project is pretty unwise particularly in an interview setting. (Wouldn't it make more sense to demo what you know how to do well than to demo what you are barely learning to do?)
+
+Here's my thought process - If I'm gonna sunk a weekend into this project I might as well get something out of it.  So I apologize for my relatively rudimentary k8s app deployment. I thought about giving you an ansible playbook as well that deploys containers to remote hosts, but I ran out of time. Don't get me started about how I seriously thought about using helm here. I might do that later.   
+
+Finally - this experience has taught me that I have a long way to go to become a good developer. I'm sorry I don't have integration/unit tests as I needed to move onto application deployment!
 
